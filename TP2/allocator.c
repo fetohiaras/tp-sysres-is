@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #define MAGIC_NUMBER 0x0123456789ABCDEFL
+#define PREALLOC_SIZE 1024
 
 typedef struct HEADER_TAG {
     struct HEADER_TAG *ptr_next;
@@ -34,6 +35,19 @@ void merge_free_blocks() {
     }
 }
 
+void preallocate_block() {
+    void *mem = sbrk(PREALLOC_SIZE);
+    if (mem == (void *)-1) return;
+
+    HEADER *block = (HEADER *)mem;
+    block->bloc_size = PREALLOC_SIZE - sizeof(HEADER) - sizeof(long);
+    block->ptr_next = free_list;
+    block->magic_number = MAGIC_NUMBER;
+    long *end_magic = (long *)((char *)(block + 1) + block->bloc_size);
+    *end_magic = MAGIC_NUMBER;
+    free_list = block;
+}
+
 void *malloc_3is(size_t size) {
     HEADER *current = free_list;
     HEADER *previous = NULL;
@@ -43,23 +57,19 @@ void *malloc_3is(size_t size) {
             size_t excess_size = current->bloc_size - size;
             size_t min_split = sizeof(HEADER) + sizeof(long) + 1;
 
-            // check if can be dividided
             if (excess_size >= min_split) {
-                // make new header on rest of block
                 HEADER *new_block = (HEADER *)((char *)(current + 1) + size + sizeof(long));
                 new_block->bloc_size = excess_size - sizeof(HEADER) - sizeof(long);
                 new_block->magic_number = MAGIC_NUMBER;
                 long *new_end_magic = (long *)((char *)(new_block + 1) + new_block->bloc_size);
                 *new_end_magic = MAGIC_NUMBER;
 
-                // connect new block
                 new_block->ptr_next = current->ptr_next;
                 if (previous)
                     previous->ptr_next = new_block;
                 else
                     free_list = new_block;
 
-                // trim block to requested size
                 current->bloc_size = size;
                 current->ptr_next = NULL;
                 current->magic_number = MAGIC_NUMBER;
@@ -68,7 +78,6 @@ void *malloc_3is(size_t size) {
                 return (void *)(current + 1);
             }
 
-            // if cannot be divided, use whole block
             if (previous)
                 previous->ptr_next = current->ptr_next;
             else
@@ -85,20 +94,10 @@ void *malloc_3is(size_t size) {
         current = current->ptr_next;
     }
 
-    // if no blocks are adequate, make another
-    void *mem = sbrk(sizeof(HEADER) + size + sizeof(long));
-    if (mem == (void *)-1) return NULL;
-
-    current = (HEADER *)mem;
-    current->ptr_next = NULL;
-    current->bloc_size = size;
-    current->magic_number = MAGIC_NUMBER;
-    long *end_magic = (long *)((char *)(current + 1) + size);
-    *end_magic = MAGIC_NUMBER;
-
-    return (void *)(current + 1);
+    
+    preallocate_block();
+    return malloc_3is(size);
 }
-
 
 void free_3is(void *ptr) {
     if (ptr == NULL) return;
@@ -142,16 +141,6 @@ int main() {
     printf("b: %s @ %p\n", b, (void *)b);
     printf("c: %s @ %p\n", c, (void *)c);
 
-    HEADER *ha = ((HEADER *)a) - 1;
-    HEADER *hb = ((HEADER *)b) - 1;
-    HEADER *hc = ((HEADER *)c) - 1;
-    printf("MAGIC a: début = 0x%lx, fin = 0x%lx\n", ha->magic_number,
-           *(long *)((char *)(ha + 1) + ha->bloc_size));
-    printf("MAGIC b: début = 0x%lx, fin = 0x%lx\n", hb->magic_number,
-           *(long *)((char *)(hb + 1) + hb->bloc_size));
-    printf("MAGIC c: début = 0x%lx, fin = 0x%lx\n", hc->magic_number,
-           *(long *)((char *)(hc + 1) + hc->bloc_size));
-
     free_3is(a);
     free_3is(b);
     free_3is(c);
@@ -175,10 +164,23 @@ int main() {
     char *g = malloc_3is(60);
     snprintf(g, 60, "bloc g fusionné");
     printf("g: %s @ %p\n", g, (void *)g);
-    HEADER *hg = ((HEADER *)g) - 1;
-    printf("MAGIC g: début = 0x%lx, fin = 0x%lx\n", hg->magic_number,
-           *(long *)((char *)(hg + 1) + hg->bloc_size));
     free_3is(g);
+    
+    
+    
+    printf("Test : Préallocation de mémoire\n");
+
+    char *blocs[10];
+
+    for (int i = 0; i < 10; i++) {
+        blocs[i] = (char *)malloc_3is(50);
+        if (!blocs[i]) {
+            printf("Allocation %d échouée\n", i);
+        } else {
+            snprintf(blocs[i], 50, "Bloc %d", i);
+            printf("%s @ %p\n", blocs[i], (void *)blocs[i]);
+        }
+    }
 
     return 0;
 }
