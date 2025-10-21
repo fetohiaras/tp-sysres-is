@@ -1,3 +1,5 @@
+#define FUSE_USE_VERSION 26
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,10 +7,9 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include "tosfs.h"
 #include <fuse_lowlevel.h>
 
-#define FUSE_USE_VERSION 35
+#include "tosfs.h"
 
 #define TOSFS_FILENAME "test_tosfs_files"
 
@@ -61,20 +62,6 @@ int mount_tosfs_img(const char *filename) {
     return 0;
 }
 
-void show_tosfs_img_info(const struct tosfs_superblock *sb) {
-    printf("TOSFS image info:\n");
-    printf("------------------------------------------------\n");
-
-    printf("Magic number  : 0x%x\n", sb->magic);
-    printf("Block size    : %u\n", sb->block_size);
-    printf("Total blocks  : %u\n", sb->blocks);
-    printf("Total inodes  : %u\n", sb->inodes);
-    printf("Root inode    : %u\n", sb->root_inode);
-    printf("Block bitmap  : "PRINTF_BINARY_PATTERN_INT32"\n", PRINTF_BYTE_TO_BINARY_INT32(sb->block_bitmap));
-    printf("Inode bitmap  : "PRINTF_BINARY_PATTERN_INT32"\n", PRINTF_BYTE_TO_BINARY_INT32(sb->inode_bitmap));
-    printf("------------------------------------------------\n");
-}
-
 void cleanup_tosfs() {
     if (fs_memory && fs_memory != MAP_FAILED)
         munmap(fs_memory, fs_size);
@@ -84,25 +71,25 @@ void cleanup_tosfs() {
 
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct fuse_session *se;
     struct fuse_chan *ch;
-    char *mountpoint;
+    char *mountpoint = NULL;
     int err = -1;
 
     if (argc < 2) {
-        fprintf(stderr, "Use: %s <mountpoint> <fs_image>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <mountpoint> [fs_image]\n", argv[0]);
         return 1;
     }
 
     const char *fs_image = (argc >= 3) ? argv[2] : TOSFS_FILENAME;
 
-    if (mount_tosfs_img(fs_image) != 0)
+    if (mount_tosfs_img(fs_image) != 0) {
         return 1;
+    }
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
         (ch = fuse_mount(mountpoint, &args)) != NULL) {
 
-        se = fuse_lowlevel_new(&args, &tosfs_oper, sizeof(tosfs_oper), NULL);
+        struct fuse_session *se = fuse_lowlevel_new(&args, &tosfs_oper, sizeof(tosfs_oper), NULL);
         if (se != NULL) {
             if (fuse_set_signal_handlers(se) != -1) {
                 fuse_session_add_chan(se, ch);
@@ -112,11 +99,13 @@ int main(int argc, char *argv[]) {
             }
             fuse_session_destroy(se);
         }
-        fuse_unmount(mountpoint);
+        fuse_unmount(mountpoint, ch);
+    } else {
+        fprintf(stderr, "Failed to mount or parse FUSE mountpoint.\n");
     }
 
     fuse_opt_free_args(&args);
     cleanup_tosfs();
+
     return err ? 1 : 0;
 }
-
