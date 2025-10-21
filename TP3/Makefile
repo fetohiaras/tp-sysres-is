@@ -1,21 +1,29 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -fPIC -g
+CFLAGS = -Wall -Wextra -g `pkg-config fuse --cflags`
+LDFLAGS = `pkg-config fuse --libs`
 
-LIBRARY = libmymalloc.so
-ALLOCSRC = allocator.c
+SRC_MAIN := $(wildcard *.c)
+SRC_EXAMPLES := $(wildcard fuse_examples/*.c)
 
-TESTSRC = malloctest.c
-TESTBIN = malloctest
+BUILD_DIR := build
 
-all: $(LIBRARY) $(TESTBIN)
+MAIN_BIN := $(BUILD_DIR)/test_tosfs
+EXAMPLE_BINS := $(patsubst fuse_examples/%.c, $(BUILD_DIR)/%, $(SRC_EXAMPLES))
 
-$(LIBRARY): $(ALLOCSRC)
-	$(CC) $(CFLAGS) -shared -o $@ $^
+ALL_BINS := $(MAIN_BIN) $(EXAMPLE_BINS)
 
-$(TESTBIN): $(TESTSRC)
-	$(CC) $(CFLAGS) -o $@ $^
+all: $(BUILD_DIR) $(ALL_BINS)
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(MAIN_BIN): $(SRC_MAIN)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(BUILD_DIR)/%: fuse_examples/%.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
-	rm -f *.o *.so $(TESTBIN)
+	rm -rf $(BUILD_DIR)
 
 .PHONY: all clean
