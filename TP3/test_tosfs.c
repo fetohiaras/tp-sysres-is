@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fuse_lowlevel.h>
+#include <errno.h>
 
 #include "tosfs.h"
 
@@ -18,17 +19,51 @@ struct tosfs_superblock *sb = NULL;
 int fs_fd = -1;
 size_t fs_size = 0;
 
+struct tosfs_inode *get_inode(tosfs_ino_t ino) {
+    if (!sb || ino == 0 || ino > sb->inode_count)
+        return NULL;
+    struct tosfs_inode *inodes = (struct tosfs_inode *)(fs_memory + sb->inode_table_offset);
+    return &inodes[ino - 1];
+}
+
+static void tosfs_getattr(fuse_req_t req, fuse_ino_t ino,
+                          struct fuse_file_info *fi)
+{
+    struct stat stbuf;
+    memset(&stbuf, 0, sizeof(stbuf));
+    (void) fi;
+
+    if (ino == FUSE_ROOT_ID) {
+        stbuf.st_ino = FUSE_ROOT_ID;
+        stbuf.st_mode = S_IFDIR | 0755;
+        stbuf.st_nlink = 2;
+        fuse_reply_attr(req, &stbuf, 1.0);
+        return;
+    }
+
+    struct tosfs_inode *inode = get_inode(ino);
+    if (!inode) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+    stbuf.st_ino = ino;
+    stbuf.st_mode = (inode->type == TOSFS_DIR) ? (S_IFDIR | 0755) : (S_IFREG | 0644);
+    stbuf.st_nlink = (inode->type == TOSFS_DIR) ? 2 : 1;
+    stbuf.st_size = inode->size;
+
+    fuse_reply_attr(req, &stbuf, 1.0);
+}
+
 static struct fuse_lowlevel_ops tosfs_oper = {
-    .lookup     = NULL,
-    .getattr    = NULL,
-    .readdir    = NULL,
-    .open       = NULL,
-    .read       = NULL
+    .getattr = tosfs_getattr,
+    .lookup  = NULL,
+    .readdir = NULL,
+    .open    = NULL,
+    .read    = NULL
 };
 
 int mount_tosfs_img(const char *filename) {
-    printf("Mounting TOSFS image...\n");
-
     fs_fd = open(filename, O_RDONLY);
     if (fs_fd < 0) {
         perror("Failed to open filesystem image");
@@ -58,7 +93,6 @@ int mount_tosfs_img(const char *filename) {
         return 1;
     }
 
-    printf("TOSFS image mounted successfully.\n");
     return 0;
 }
 
