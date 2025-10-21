@@ -1,11 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <string.h>
 #include "tosfs.h"
+#include <fuse_lowlevel.h>
+
+#define FUSE_USE_VERSION 35
 
 #define TOSFS_FILENAME "test_tosfs_files"
 
@@ -13,6 +16,14 @@ void *fs_memory = NULL;
 struct tosfs_superblock *sb = NULL;
 int fs_fd = -1;
 size_t fs_size = 0;
+
+static struct fuse_lowlevel_ops tosfs_oper = {
+    .lookup     = NULL,
+    .getattr    = NULL,
+    .readdir    = NULL,
+    .open       = NULL,
+    .read       = NULL
+};
 
 int mount_tosfs_img(const char *filename) {
     printf("Mounting TOSFS image...\n");
@@ -72,15 +83,40 @@ void cleanup_tosfs() {
 }
 
 int main(int argc, char *argv[]) {
-    const char *filename = (argc > 1) ? argv[1] : TOSFS_FILENAME;
+    struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+    struct fuse_session *se;
+    struct fuse_chan *ch;
+    char *mountpoint;
+    int err = -1;
 
-    if (mount_tosfs_img(filename) != 0) {
-        fprintf(stderr, "Could not mount filesystem image.\n");
+    if (argc < 2) {
+        fprintf(stderr, "Use: %s <mountpoint> <fs_image>\n", argv[0]);
         return 1;
     }
 
-    show_tosfs_img_info(sb);
-    cleanup_tosfs();
+    const char *fs_image = (argc >= 3) ? argv[2] : TOSFS_FILENAME;
 
-    return 0;
+    if (mount_tosfs_img(fs_image) != 0)
+        return 1;
+
+    if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
+        (ch = fuse_mount(mountpoint, &args)) != NULL) {
+
+        se = fuse_lowlevel_new(&args, &tosfs_oper, sizeof(tosfs_oper), NULL);
+        if (se != NULL) {
+            if (fuse_set_signal_handlers(se) != -1) {
+                fuse_session_add_chan(se, ch);
+                err = fuse_session_loop(se);
+                fuse_remove_signal_handlers(se);
+                fuse_session_remove_chan(ch);
+            }
+            fuse_session_destroy(se);
+        }
+        fuse_unmount(mountpoint);
+    }
+
+    fuse_opt_free_args(&args);
+    cleanup_tosfs();
+    return err ? 1 : 0;
 }
+
