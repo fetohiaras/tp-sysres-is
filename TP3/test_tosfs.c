@@ -9,10 +9,10 @@
 #include <sys/stat.h>
 #include <fuse_lowlevel.h>
 #include <errno.h>
-
+#include <linux/types.h>
 #include "tosfs.h"
-
 #define TOSFS_FILENAME "test_tosfs_files"
+typedef __u32 tosfs_ino_t;
 
 void *fs_memory = NULL;
 struct tosfs_superblock *sb = NULL;
@@ -20,11 +20,13 @@ int fs_fd = -1;
 size_t fs_size = 0;
 
 struct tosfs_inode *get_inode(tosfs_ino_t ino) {
-    if (!sb || ino == 0 || ino > sb->inode_count)
+    if (!sb || ino == 0 || ino > sb->inodes)
         return NULL;
-    struct tosfs_inode *inodes = (struct tosfs_inode *)(fs_memory + sb->inode_table_offset);
+
+    struct tosfs_inode *inodes = (struct tosfs_inode *)(fs_memory + TOSFS_BLOCK_SIZE);
     return &inodes[ino - 1];
 }
+
 
 static void tosfs_getattr(fuse_req_t req, fuse_ino_t ino,
                           struct fuse_file_info *fi)
@@ -33,24 +35,33 @@ static void tosfs_getattr(fuse_req_t req, fuse_ino_t ino,
     memset(&stbuf, 0, sizeof(stbuf));
     (void) fi;
 
-    if (ino == FUSE_ROOT_ID) {
-        stbuf.st_ino = FUSE_ROOT_ID;
+
+    if (ino == TOSFS_ROOT_INODE || ino == FUSE_ROOT_ID) {
+        stbuf.st_ino = TOSFS_ROOT_INODE;
         stbuf.st_mode = S_IFDIR | 0755;
         stbuf.st_nlink = 2;
+        stbuf.st_size = TOSFS_BLOCK_SIZE;
         fuse_reply_attr(req, &stbuf, 1.0);
         return;
     }
 
-    struct tosfs_inode *inode = get_inode(ino);
-    if (!inode) {
+    struct tosfs_inode *inode = &((struct tosfs_inode *)(fs_memory + TOSFS_BLOCK_SIZE))[ino - 1];
+    if (!inode || inode->inode == 0) {
         fuse_reply_err(req, ENOENT);
         return;
     }
 
-    stbuf.st_ino = ino;
-    stbuf.st_mode = (inode->type == TOSFS_DIR) ? (S_IFDIR | 0755) : (S_IFREG | 0644);
-    stbuf.st_nlink = (inode->type == TOSFS_DIR) ? 2 : 1;
-    stbuf.st_size = inode->size;
+
+    stbuf.st_ino = inode->inode;
+    if (S_ISDIR(inode->mode))
+        stbuf.st_mode = S_IFDIR | inode->perm;
+    else
+        stbuf.st_mode = S_IFREG | inode->perm;
+
+    stbuf.st_nlink = inode->nlink;
+    stbuf.st_size  = inode->size;
+    stbuf.st_uid   = inode->uid;
+    stbuf.st_gid   = inode->gid;
 
     fuse_reply_attr(req, &stbuf, 1.0);
 }
