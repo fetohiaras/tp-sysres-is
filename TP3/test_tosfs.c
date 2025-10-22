@@ -66,10 +66,64 @@ static void tosfs_getattr(fuse_req_t req, fuse_ino_t ino,
     fuse_reply_attr(req, &stbuf, 1.0);
 }
 
+
+
+
+
+static void tosfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
+                          off_t off, struct fuse_file_info *fi)
+{
+    (void) fi;
+
+    if (ino != TOSFS_ROOT_INODE) {
+        fuse_reply_err(req, ENOTDIR);
+        return;
+    }
+
+    char buf[1024];
+    size_t pos = 0;
+    struct stat st;
+
+
+    memset(&st, 0, sizeof(st));
+    st.st_ino = ino;
+    st.st_mode = S_IFDIR | 0755;
+    pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, ".", &st, pos);
+    pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, "..", &st, pos);
+
+    struct tosfs_inode *root_inode = get_inode(ino);
+    int nb_entries = 0;
+    if (root_inode)
+        nb_entries = root_inode->size / sizeof(struct tosfs_dentry);
+
+    if (nb_entries == 0) {
+
+        memset(&st, 0, sizeof(st));
+        st.st_ino = 2;
+        st.st_mode = S_IFREG | 0644;
+        pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, "hello.txt", &st, pos);
+    } else {
+
+        struct tosfs_dentry *entries = (struct tosfs_dentry *)(fs_memory + TOSFS_ROOT_BLOCK * TOSFS_BLOCK_SIZE);
+        for (int i = 0; i < nb_entries; i++) {
+            if (entries[i].inode == 0)
+                continue;
+            memset(&st, 0, sizeof(st));
+            st.st_ino = entries[i].inode;
+            st.st_mode = S_IFREG | 0644;
+            pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, entries[i].name, &st, pos);
+        }
+    }
+
+    fuse_reply_buf(req, buf, pos);
+}
+
+
+
 static struct fuse_lowlevel_ops tosfs_oper = {
     .getattr = tosfs_getattr,
     .lookup  = NULL,
-    .readdir = NULL,
+    .readdir = tosfs_readdir,
     .open    = NULL,
     .read    = NULL
 };
@@ -114,6 +168,8 @@ void cleanup_tosfs() {
         close(fs_fd);
 }
 
+
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fuse_chan *ch;
@@ -129,6 +185,14 @@ int main(int argc, char *argv[]) {
 
     if (mount_tosfs_img(fs_image) != 0) {
         return 1;
+    }
+
+
+    struct tosfs_inode *root = get_inode(TOSFS_ROOT_INODE);
+    if (root) {
+        printf("Root inode size: %u\n", root->size);
+    } else {
+        printf("Impossible de récupérer l'inode racine\n");
     }
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
