@@ -31,6 +31,7 @@ struct tosfs_inode *get_inode(tosfs_ino_t ino) {
 static void tosfs_getattr(fuse_req_t req, fuse_ino_t ino,
                           struct fuse_file_info *fi)
 {
+    printf("[DEBUG] getattr called for inode: %lu\n", ino);
     struct stat stbuf;
     memset(&stbuf, 0, sizeof(stbuf));
     (void) fi;
@@ -66,13 +67,10 @@ static void tosfs_getattr(fuse_req_t req, fuse_ino_t ino,
     fuse_reply_attr(req, &stbuf, 1.0);
 }
 
-
-
-
-
 static void tosfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
                           off_t off, struct fuse_file_info *fi)
 {
+    printf("[DEBUG] readdir called for inode: %lu\n", ino);
     (void) fi;
 
     if (ino != TOSFS_ROOT_INODE) {
@@ -88,7 +86,9 @@ static void tosfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
     memset(&st, 0, sizeof(st));
     st.st_ino = ino;
     st.st_mode = S_IFDIR | 0755;
+    printf("[DEBUG] Adding entry: .\n");
     pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, ".", &st, pos);
+    printf("[DEBUG] Adding entry: ..\n");
     pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, "..", &st, pos);
 
     struct tosfs_inode *root_inode = get_inode(ino);
@@ -111,6 +111,7 @@ static void tosfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
             memset(&st, 0, sizeof(st));
             st.st_ino = entries[i].inode;
             st.st_mode = S_IFREG | 0644;
+            printf("[DEBUG] Adding entry: %s (inode %d)\n", entries[i].name, entries[i].inode);
             pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, entries[i].name, &st, pos);
         }
     }
@@ -118,11 +119,48 @@ static void tosfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
     fuse_reply_buf(req, buf, pos);
 }
 
+static void tosfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
+{
+    printf("[DEBUG] lookup called: parent=%lu, name=%s\n", parent, name);
 
+    struct fuse_entry_param e;
+    memset(&e, 0, sizeof(e));
+
+    if (parent != TOSFS_ROOT_INODE) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+    struct tosfs_dentry *entries = (struct tosfs_dentry *)(fs_memory + TOSFS_ROOT_BLOCK * TOSFS_BLOCK_SIZE);
+    int nb_entries = sb->blocks; 
+
+    for (int i = 0; i < nb_entries; i++) {
+        if (entries[i].inode != 0 && strcmp(entries[i].name, name) == 0) {
+            printf("[DEBUG] Found entry '%s' with inode %d\n", name, entries[i].inode);
+            e.ino = entries[i].inode;
+            e.attr_timeout = 1.0;
+            e.entry_timeout = 1.0;
+
+            struct stat stbuf;
+            memset(&stbuf, 0, sizeof(stbuf));
+            stbuf.st_ino = entries[i].inode;
+            stbuf.st_mode = S_IFREG | 0644;
+            stbuf.st_nlink = 1;
+            stbuf.st_size = TOSFS_BLOCK_SIZE;
+            e.attr = stbuf;
+
+            fuse_reply_entry(req, &e);
+            return;
+        }
+    }
+
+    printf("[DEBUG] Entry '%s' not found in directory\n", name);
+    fuse_reply_err(req, ENOENT);
+}
 
 static struct fuse_lowlevel_ops tosfs_oper = {
     .getattr = tosfs_getattr,
-    .lookup  = NULL,
+    .lookup  = tosfs_lookup,
     .readdir = tosfs_readdir,
     .open    = NULL,
     .read    = NULL
@@ -192,7 +230,7 @@ int main(int argc, char *argv[]) {
     if (root) {
         printf("Root inode size: %u\n", root->size);
     } else {
-        printf("Impossible de récupérer l'inode racine\n");
+        printf("Impossible to recover root inode\n");
     }
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 &&
