@@ -101,7 +101,7 @@ static void tosfs_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
         memset(&st, 0, sizeof(st));
         st.st_ino = 2;
         st.st_mode = S_IFREG | 0644;
-        pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, "hello.txt", &st, pos);
+        pos += fuse_add_direntry(req, buf + pos, sizeof(buf) - pos, "one_file.txt", &st, pos);
     } else {
 
         struct tosfs_dentry *entries = (struct tosfs_dentry *)(fs_memory + TOSFS_ROOT_BLOCK * TOSFS_BLOCK_SIZE);
@@ -158,12 +158,36 @@ static void tosfs_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
     fuse_reply_err(req, ENOENT);
 }
 
+static void tosfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
+                       off_t off, struct fuse_file_info *fi)
+{
+    printf("[DEBUG] read called: ino=%lu, size=%lu, off=%ld\n", ino, size, off);
+
+    struct tosfs_inode *inode = get_inode(ino);
+    if (!inode || inode->inode == 0) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+    // check out of file offsets, correct size if needed and calculates block address
+    if (off >= inode->size) {
+        fuse_reply_buf(req, NULL, 0); 
+        return;
+    }
+
+    if (off + size > inode->size)
+        size = inode->size - off;
+
+    void *block_addr = fs_memory + inode->block_no * TOSFS_BLOCK_SIZE;
+    fuse_reply_buf(req, (const char *)block_addr + off, size);
+}
+
+
 static struct fuse_lowlevel_ops tosfs_oper = {
     .getattr = tosfs_getattr,
     .lookup  = tosfs_lookup,
     .readdir = tosfs_readdir,
     .open    = NULL,
-    .read    = NULL
+    .read    = tosfs_read
 };
 
 int mount_tosfs_img(const char *filename) {
