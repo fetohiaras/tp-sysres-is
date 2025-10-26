@@ -168,7 +168,7 @@ static void tosfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
         fuse_reply_err(req, ENOENT);
         return;
     }
-    // check out of file offsets, correct size if needed and calculates block address
+
     if (off >= inode->size) {
         fuse_reply_buf(req, NULL, 0); 
         return;
@@ -182,16 +182,109 @@ static void tosfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 }
 
 
+static int dir_add(struct tosfs_inode *dir, const char *name, tosfs_ino_t ino)
+{
+    struct tosfs_dentry *entries = (struct tosfs_dentry *)(fs_memory + dir->block_no * TOSFS_BLOCK_SIZE);
+    int nb_entries = dir->size / sizeof(struct tosfs_dentry);
+
+
+    for (int i = 0; i < nb_entries; i++) {
+        if (entries[i].inode != 0 && strcmp(entries[i].name, name) == 0)
+            return -EEXIST;
+    }
+
+
+    struct tosfs_dentry *new_entry = &entries[nb_entries];
+    strncpy(new_entry->name, name, sizeof(new_entry->name) - 1);
+    new_entry->inode = ino;
+
+    dir->size += sizeof(struct tosfs_dentry);
+    return 0;
+}
+
+
+static void tosfs_create(fuse_req_t req, fuse_ino_t parent, const char *name,
+                         mode_t mode, struct fuse_file_info *fi)
+{
+    printf("[DEBUG] create called: parent=%lu, name=%s, mode=%o\n", parent, name, mode);
+
+    if (parent != TOSFS_ROOT_INODE) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+    struct tosfs_inode *root = get_inode(parent);
+    if (!root) {
+        fuse_reply_err(req, EIO);
+        return;
+    }
+
+
+    struct tosfs_inode *inodes = (struct tosfs_inode *)(fs_memory + TOSFS_BLOCK_SIZE);
+    tosfs_ino_t new_ino = 0;
+    for (tosfs_ino_t i = 1; i <= sb->inodes; i++) {
+        if (inodes[i - 1].inode == 0) {
+            new_ino = i;
+            inodes[i - 1].inode = i;
+            inodes[i - 1].mode = mode;
+            inodes[i - 1].perm = mode & 0777;
+            inodes[i - 1].nlink = 1;
+            inodes[i - 1].size = 0;
+            inodes[i - 1].uid = getuid();
+            inodes[i - 1].gid = getgid();
+            inodes[i - 1].block_no = TOSFS_ROOT_BLOCK + 1 + i;
+            break;
+        }
+    }
+
+    if (new_ino == 0) {
+        fuse_reply_err(req, ENOSPC);
+        return;
+    }
+
+
+    int res = dir_add(root, name, new_ino);
+    if (res < 0) {
+        fuse_reply_err(req, -res);
+        return;
+    }
+
+    struct fuse_entry_param e;
+    memset(&e, 0, sizeof(e));
+    e.ino = new_ino;
+    e.attr_timeout = 1.0;
+    e.entry_timeout = 1.0;
+
+    struct stat stbuf;
+    memset(&stbuf, 0, sizeof(stbuf));
+    stbuf.st_ino = new_ino;
+    stbuf.st_mode = S_IFREG | (mode & 0777);
+    stbuf.st_nlink = 1;
+    stbuf.st_uid = getuid();
+    stbuf.st_gid = getgid();
+    stbuf.st_size = 0;
+    e.attr = stbuf;
+
+    printf("[DEBUG] Created file '%s' with inode %d\n", name, new_ino);
+
+    fuse_reply_entry(req, &e);
+}
+
+
+
+
 static struct fuse_lowlevel_ops tosfs_oper = {
     .getattr = tosfs_getattr,
     .lookup  = tosfs_lookup,
     .readdir = tosfs_readdir,
+    .create  = tosfs_create,
     .open    = NULL,
     .read    = tosfs_read
 };
 
+
 int mount_tosfs_img(const char *filename) {
-    fs_fd = open(filename, O_RDONLY);
+    fs_fd = open(filename, O_RDWR);
     if (fs_fd < 0) {
         perror("Failed to open filesystem image");
         return 1;
@@ -205,7 +298,7 @@ int mount_tosfs_img(const char *filename) {
     }
     fs_size = st.st_size;
 
-    fs_memory = mmap(NULL, fs_size, PROT_READ, MAP_SHARED, fs_fd, 0);
+    fs_memory = mmap(NULL, fs_size, PROT_READ | PROT_WRITE, MAP_SHARED, fs_fd, 0);
     if (fs_memory == MAP_FAILED) {
         perror("Failed to mmap file");
         close(fs_fd);
@@ -222,6 +315,8 @@ int mount_tosfs_img(const char *filename) {
 
     return 0;
 }
+
+
 
 void cleanup_tosfs() {
     if (fs_memory && fs_memory != MAP_FAILED)
