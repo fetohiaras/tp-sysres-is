@@ -181,6 +181,46 @@ static void tosfs_read(fuse_req_t req, fuse_ino_t ino, size_t size,
     fuse_reply_buf(req, (const char *)block_addr + off, size);
 }
 
+static void tosfs_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
+                        size_t size, off_t off, struct fuse_file_info *fi)
+{
+    printf("[DEBUG] write called: ino=%lu, size=%lu, off=%ld\n", ino, size, off);
+    (void) fi;
+
+    struct tosfs_inode *inode = get_inode(ino);
+    if (!inode || inode->inode == 0) {
+        fuse_reply_err(req, ENOENT);
+        return;
+    }
+
+
+    if (inode->block_no == 0) {
+        fuse_reply_err(req, EIO);
+        return;
+    }
+
+
+    if (off + size > TOSFS_BLOCK_SIZE) {
+        size = TOSFS_BLOCK_SIZE - off;
+    }
+
+    void *block_addr = fs_memory + inode->block_no * TOSFS_BLOCK_SIZE;
+    memcpy((char *)block_addr + off, buf, size);
+
+
+    if (off + size > inode->size)
+        inode->size = off + size;
+
+
+    msync(block_addr, TOSFS_BLOCK_SIZE, MS_SYNC);
+
+    printf("[DEBUG] Wrote %lu bytes to inode %u (new size = %u)\n", size, inode->inode, inode->size);
+
+    fuse_reply_write(req, size);
+}
+
+
+
 
 static int dir_add(struct tosfs_inode *dir, const char *name, tosfs_ino_t ino)
 {
@@ -271,15 +311,14 @@ static void tosfs_create(fuse_req_t req, fuse_ino_t parent, const char *name,
 }
 
 
-
-
 static struct fuse_lowlevel_ops tosfs_oper = {
     .getattr = tosfs_getattr,
     .lookup  = tosfs_lookup,
     .readdir = tosfs_readdir,
     .create  = tosfs_create,
     .open    = NULL,
-    .read    = tosfs_read
+    .read    = tosfs_read,
+    .write   = tosfs_write,
 };
 
 
@@ -315,7 +354,6 @@ int mount_tosfs_img(const char *filename) {
 
     return 0;
 }
-
 
 
 void cleanup_tosfs() {
