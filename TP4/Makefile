@@ -1,23 +1,16 @@
-BUILD_DIR = build
+CC = gcc
+CFLAGS = -Wall -Wextra -g -Iinclude
+LDFLAGS = -Linclude -lseg
 
-SRC = $(wildcard *.c)
-BIN = $(BUILD_DIR)/ipc_client
+SRC = ipc_client.c
+BIN = build/ipc_client
 
-CFLAGS += -Wall -Wextra -g
-
-all: $(BUILD_DIR) $(BIN)
-
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+all: $(BIN)
 
 $(BIN): $(SRC)
-	$(CC) $(CFLAGS) -o $@ $^
-
-indent:
-	indent -linux -i4 -nut -ts2 *.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -f *.o
+	rm -f $(BIN)
 
-.PHONY: all clean indent
+.PHONY: all clean
