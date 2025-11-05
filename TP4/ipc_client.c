@@ -8,6 +8,8 @@
 
 #include "segdef.h"
 
+#define NB_REQ 3
+
 struct sembuf sop;
 segment *seg;
 
@@ -44,7 +46,7 @@ int main() {
     int shmid, semid;
     init_all(&shmid, &semid);
 
-    for(int req = 0; req <= 5; req++) {
+    for(int req = 0; req < NB_REQ; req++) {
 
         acq_sem(semid, seg_dispo);
 
@@ -65,11 +67,12 @@ int main() {
         wait_sem(semid, res_ok);
         lib_sem(semid, seg_dispo);
 
-        printf("\n  REQUEST %d \n", req);
-        printf("PID : %d\n", seg->pid);
-        printf("Client average  = %ld\n", avg_client);
-        printf("Server average  = %ld\n", avg_server);
-
+        printf("\n---------- Data verification: Request %d -------------\n", req);
+        printf("PID:                        %d\n", seg->pid);
+        printf("Client average sent:        %ld\n", avg_client);
+        printf("Server average received:    %ld\n", avg_server);
+        printf("Difference:                 %ld\n", labs(avg_client - avg_server));
+        printf("-----------------------------------------------------\n");
     }
 
     shmdt(seg);
