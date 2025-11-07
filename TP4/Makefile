@@ -1,16 +1,30 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -g -Iinclude
-LDFLAGS = -Linclude -lseg
+CC      = gcc
+CFLAGS  = -Wall -Wextra -g -Iinclude
+BUILD   = build
 
-SRC = ipc_client.c
-BIN = build/ipc_client
+LIBNAME     = myseg
+LIB_STATIC  = $(BUILD)/lib$(LIBNAME).a
+LIBSRC      = sem_functions.c
+LIBOBJ      = $(BUILD)/sem_functions.o
 
-all: $(BIN)
+IPC_SRC = ipc_client.c
+IPC_BIN = $(BUILD)/ipc_client
 
-$(BIN): $(SRC)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+all: $(BUILD) $(LIB_STATIC) $(IPC_BIN)
+
+$(BUILD):
+	mkdir -p $(BUILD)
+
+$(BUILD)/sem_functions.o: $(LIBSRC) | $(BUILD)
+	$(CC) $(CFLAGS) -fPIC -c $< -o $@
+
+$(LIB_STATIC): $(LIBOBJ)
+	ar rcs $@ $^
+
+$(IPC_BIN): $(IPC_SRC) $(LIB_STATIC)
+	$(CC) $(CFLAGS) $< -L$(BUILD) -l$(LIBNAME) -o $@
 
 clean:
-	rm -f $(BIN)
+	rm -rf $(BUILD)
 
 .PHONY: all clean
